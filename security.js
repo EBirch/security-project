@@ -1,18 +1,36 @@
 #!/usr/bin/env node
 var argv=require('optimist')
-	.usage('Usage: $0 -a [des|3des|aes]  -b [ecb|cbc] -k [string] -f [filepath]')
+	.usage('Usage: $0 -a [des|3des|aes]  -b [ecb|cbc] -k [hex string] -f [filepath]')
 	.alias('a', 'alg')
 	.alias('b', 'block')
 	.alias('k', 'key')
 	.alias('d', 'decrypt')
 	.alias('f', 'file')
+	.alias('o', 'output')
 	.demand(['a', 'b', 'k', 'f'])
 	.default('d', false)
+	.default('o', false)
+	.string('k')
 	.argv;
 var fs=require('fs');
 
+if(argv.a!=='des'&&argv.a!=='3des'&&argv.a!=='aes'){
+	console.log("Invalid algorithm specified");
+	return;
+}
+
+if(argv.b!=='ecb'&&argv.b!=='cbc'){
+	console.log("Invalid block mode specified");
+	return;
+}
+
 if(!fs.existsSync(argv.f)){
 	console.log("Invalid source file");
+	return;
+}
+
+if(argv.k.match(/^[a-fA-F0-9]{16}$/)===null){
+	console.log("Invalid key");
 	return;
 }
 
@@ -54,6 +72,72 @@ var eSelectionTable=[[32, 1, 2, 3, 4, 5],
 											[24, 25, 26, 27, 28, 29],
 											[28, 29, 30, 31, 32, 1]];
 
+var boxes=[[[14, 4, 13, 1, 2, 15, 11, 8, 3, 10, 6, 12, 5, 9, 0, 7],
+						[0, 15, 7, 4, 14, 2, 13, 1, 10, 6, 12, 11, 9, 5, 3, 8],
+						[4, 1, 14, 8, 13, 6, 2, 11, 15, 12, 9, 7, 3, 10, 5, 0],
+						[15, 12, 8, 2, 4, 9, 1, 7, 5, 11, 3, 14, 10, 0, 6, 13]],
+
+						[[15, 1, 8, 14, 6, 11, 3, 4, 9, 7, 2, 13, 12, 0, 5, 10],
+						[3, 13, 4, 7, 15, 2, 8, 14, 12, 0, 1, 10, 6, 9, 11, 5],
+						[0, 14, 7, 11, 10, 4, 13, 1, 5, 8, 12, 6, 9, 3, 2, 15],
+						[13, 8, 10, 1, 3, 15, 4, 2, 11, 6, 7, 12, 0, 5, 14, 9]],
+
+						[[10, 0, 9, 14, 6, 3, 15, 5, 1, 13, 12, 7, 11, 4, 2, 8],
+						[13, 7, 0, 9, 3, 4, 6, 10, 2, 8, 5, 14, 12, 11, 15, 1],
+						[13, 6, 4, 9, 8, 15, 3, 0, 11, 1, 2, 12, 5, 10, 14, 7],
+						[1, 10, 13, 0, 6, 9, 8, 7, 4, 15, 14, 3, 11, 5, 2, 12]],
+
+						[[7, 13, 14, 3, 0, 6, 9, 10, 1, 2, 8, 5, 11, 12, 4, 15],
+						[13, 8, 11, 5, 6, 15, 0, 3, 4, 7, 2, 12, 1, 10, 14, 9],
+						[10, 6, 9, 0, 12, 11, 7, 13, 15, 1, 3, 14, 5, 2, 8, 4],
+						[3, 15, 0, 6, 10, 1, 13, 8, 9, 4, 5, 11, 12, 7, 2, 14]],
+
+						[[2, 12, 4, 1, 7, 10, 11, 6, 8, 5, 3, 15, 13, 0, 14, 9],
+						[14, 11, 2, 12, 4, 7, 13, 1, 5, 0, 15, 10, 3, 9, 8, 6],
+						[4, 2, 1, 11, 10, 13, 7, 8, 15, 9, 12, 5, 6, 3, 0, 14],
+						[11, 8, 12, 7, 1, 14, 2, 13, 6, 15, 0, 9, 10, 4, 5, 3]],
+
+						[[12, 1, 10, 15, 9, 2, 6, 8, 0, 13, 3, 4, 14, 7, 5, 11],
+						[10, 15, 4, 2, 7, 12, 9, 5, 6, 1, 13, 14, 0, 11, 3, 8],
+						[9, 14, 15, 5, 2, 8, 12, 3, 7, 0, 4, 10, 1, 13, 11, 6],
+						[4, 3, 2, 12, 9, 5, 15, 10, 11, 14, 1, 7, 6, 0, 8, 13]],
+
+						[[4, 11, 2, 14, 15, 0, 8, 13, 3, 12, 9, 7, 5, 10, 6, 1],
+						[13, 0, 11, 7, 4, 9, 1, 10, 14, 3, 5, 12, 2, 15, 8, 6],
+						[1, 4, 11, 13, 12, 3, 7, 14, 10, 15, 6, 8, 0, 5, 9, 2],
+						[6, 11, 13, 8, 1, 4, 10, 7, 9, 5, 0, 15, 14, 2, 3, 12]],
+
+						[[13, 2, 8, 4, 6, 15, 11, 1, 10, 9, 3, 14, 5, 0, 12, 7],
+						[1, 15, 13, 8, 10, 3, 7, 4, 12, 5, 6, 11, 0, 14, 9, 2],
+						[7, 11, 4, 1, 9, 12, 14, 2, 0, 6, 10, 13, 15, 3, 5, 8],
+						[2, 1, 14, 7, 4, 10, 8, 13, 15, 12, 9, 0, 3, 5, 6, 11]]];
+
+var ptable=[[16, 7, 20, 21],
+						[29, 12, 28, 17],
+						[1, 15, 23, 26],
+						[5, 18, 31, 10],
+						[2, 8, 24, 14],
+						[32, 27, 3, 9],
+						[19, 13, 30, 6],
+						[22, 11, 4, 25]];
+
+var finalTable=[[40, 8, 48, 16, 56, 24, 64, 32],
+								[39, 7, 47, 15, 55, 23, 63, 31],
+								[38, 6, 46, 14, 54, 22, 62, 30],
+								[37, 5, 45, 13, 53, 21, 61, 29],
+								[36, 4, 44, 12, 52, 20, 60, 28],
+								[35, 3, 43, 11, 51, 19, 59, 27],
+								[34, 2, 42, 10, 50, 18, 58, 26],
+								[33, 1, 41, 9, 49, 17, 57, 25]];
+
+function xor(left, right){
+	var temp="";
+	for(var i=0;i<left.length;++i){
+		temp+=(left[i]!==right[i])?'1':'0';
+	}
+	return temp;
+}
+
 function getPermutation(str, table){
 	var temp="";
 	for(row in table){
@@ -68,26 +152,52 @@ function getNextHalf(halves, shift){
 	return [halves[0].slice(shift, halves[0].length).concat(halves[0].slice(0, shift)), halves[1].slice(shift, halves[1].length).concat(halves[1].slice(0, shift))];
 }
 
-function ecbMangle(block, key){
+function sbox(block, box){
+	var i=parseInt(block[0].concat(block[5]), 2);
+	var j=parseInt(block.slice(1, 5), 2);
+	return ("000"+box[i][j].toString(2)).slice(-4);
+}
 
+function ecbMangle(block, key){
+	var temp=xor(key, getPermutation(block, eSelectionTable));
+	temp=temp.match(/.{6}/g);
+	for(var i=0;i<temp.length;++i){
+		temp[i]=sbox(temp[i], boxes[i]);
+	}
+	return getPermutation(temp.join(''), ptable);
 }
 
 function ecbEncode(block){
 	var ip=getPermutation(block, initialPermute);
 	var halves=[[ip.slice(0, 32), ip.slice(-32)]];
 	for(var i=1;i<=16;++i){
-		halves.push([halves[i-1][1], parseInt(halves[i-1][0], 2)^parseInt(ecbMangle(halves[i-1][1], subkeys[i-1])]), 2);
+		halves.push([halves[i-1][1], xor(halves[i-1][0], ecbMangle(halves[i-1][1], subkeys[i-1]))]);
 	}
-	return halves[16][0].concat(halves[16][1]);
+	var temp=getPermutation(halves[16][1].concat(halves[16][0]), finalTable).match(/.{4}/g);
+	for(chunk in temp){
+		temp[chunk]=parseInt(temp[chunk], 2).toString(16).toUpperCase();
+	}
+	return temp.join('');
+}
+
+function ecbDecode(block){
+	var ip=getPermutation(block, initialPermute);
+	var halves=[[ip.slice(0, 32), ip.slice(-32)]];
+	for(var i=1;i<=16;++i){
+		halves.push([halves[i-1][1], xor(halves[i-1][0], ecbMangle(halves[i-1][1], subkeys[16-i]))]);
+		// console.log(i, halves[halves.length-1]);
+	}
+	var temp=getPermutation(halves[16][1].concat(halves[16][0]), finalTable).match(/.{8}/g);
+	for(chunk in temp){
+		temp[chunk]=String.fromCharCode(parseInt(temp[chunk], 2));
+	}
+	return temp.join('');
 }
 
 var key=argv.k.split('');
 var subkeys=[];
 var keyhalves=[];
-if(argv.k.match(/^[a-fA-F0-9]{16}$/)===null){
-	console.log("Invalid key");
-	return;
-}
+
 for(int in key){
 	key[int]=(("000"+parseInt(key[int],16).toString(2)).slice(-4));
 }
@@ -103,9 +213,15 @@ for(var i=1;i<=16;++i){
 }
 
 var msgData="";
-for(char in fileData){
-	msgData+=("0000000"+fileData.charCodeAt(char).toString(2)).slice(-8);
-	// msgData+=' ';
+if(argv.d){
+	for(char in fileData){
+		msgData+=("000"+parseInt(fileData[char], 16).toString(2)).slice(-4);
+	}
+}
+else{
+	for(char in fileData){
+		msgData+=("0000000"+fileData.charCodeAt(char).toString(2)).slice(-8);
+	}
 }
 
 while((msgData.length%64)!==0){
@@ -114,21 +230,41 @@ while((msgData.length%64)!==0){
 
 msgData=msgData.match(/.{64}/g);
 
+var finalText="";
 if(!argv.d){
-	var cleartext="";
-	for(block in msgData){
-		if(argv.b==="ecb"){
-			cleartext+=ecbEncode(msgData[block]);
+	if(argv.a==='des'){
+		for(block in msgData){
+			if(argv.b==="ecb"){
+				finalText+=ecbEncode(msgData[block]);
+			}
+			else{
+				//cbc goes here
+			}
 		}
 	}
+	else{
+		//aes goes here
+	}
 }
-
-//console.log(msgData);
-// console.log(fileData);
-// console.log(key)
-// console.log(key.length);return;
-// console.log(getPermutation(key.join(''), pc1));
-// console.log(hexdata)
-
-// key=key.join('');
-// console.log(key.split(/(.{4})/).filter(Boolean))
+else{
+	if(argv.a==='des'){
+		for(block in msgData){
+			if(argv.b==="ecb"){
+				finalText+=ecbDecode(msgData[block]);
+			}
+			else{
+				//cbc goes here
+			}
+		}
+	}
+	else{
+		//aes goes here
+	}
+}
+if(argv.o){
+	finalText+='\n';
+	fs.writeFile(argv.o, finalText);
+}
+else{
+	console.log(finalText);
+}
