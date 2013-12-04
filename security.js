@@ -4,13 +4,16 @@ var argv=require('optimist')
 	.alias('a', 'alg')
 	.alias('b', 'block')
 	.alias('k', 'key')
+	.alias('s', 'secondkey')
 	.alias('d', 'decrypt')
 	.alias('f', 'file')
 	.alias('o', 'output')
 	.demand(['a', 'b', 'k', 'f'])
 	.default('d', false)
 	.default('o', false)
+	.default('k2', '')
 	.string('k')
+	.string('s')
 	.argv;
 var fs=require('fs');
 
@@ -31,6 +34,11 @@ if(!fs.existsSync(argv.f)){
 
 if(argv.k.match(/^[a-fA-F0-9]{16}$/)===null){
 	console.log("Invalid key");
+	return;
+}
+
+if((argv.a==='3des')&&(argv.s.match(/^[a-fA-F0-9]{16}$/)===null)){
+	console.log("Invalid second key");
 	return;
 }
 
@@ -138,6 +146,16 @@ function xor(left, right){
 	return temp;
 }
 
+function hexXor(left, right){
+	var tempLeft="";
+	var tempRight="";
+	for(var i=0;i<left.length;++i){
+		tempLeft+=parseInt(left[i], 16).toString(2);
+		tempRight+=parseInt(right[i], 16).toString(2);
+	}
+	return xor(tempLeft, tempRight);
+}
+
 function getPermutation(str, table){
 	var temp="";
 	for(row in table){
@@ -167,100 +185,133 @@ function ecbMangle(block, key){
 	return getPermutation(temp.join(''), ptable);
 }
 
-function ecbEncode(block){
+function desEncode(block, subkeys, hex){
 	var ip=getPermutation(block, initialPermute);
 	var halves=[[ip.slice(0, 32), ip.slice(-32)]];
 	for(var i=1;i<=16;++i){
 		halves.push([halves[i-1][1], xor(halves[i-1][0], ecbMangle(halves[i-1][1], subkeys[i-1]))]);
 	}
-	var temp=getPermutation(halves[16][1].concat(halves[16][0]), finalTable).match(/.{4}/g);
+	var temp=getPermutation(halves[16][1].concat(halves[16][0]), finalTable).match(/.{8}/g);
 	for(chunk in temp){
-		temp[chunk]=parseInt(temp[chunk], 2).toString(16).toUpperCase();
+		if(hex){
+			temp[chunk]=("0"+parseInt(temp[chunk], 2).toString(16).toUpperCase()).slice(-2);
+		}
+		else{
+			temp[chunk]=String.fromCharCode(parseInt(temp[chunk], 2));
+		}
 	}
 	return temp.join('');
 }
 
-function ecbDecode(block){
+function desDecode(block, subkeys, hex){
 	var ip=getPermutation(block, initialPermute);
 	var halves=[[ip.slice(0, 32), ip.slice(-32)]];
 	for(var i=1;i<=16;++i){
 		halves.push([halves[i-1][1], xor(halves[i-1][0], ecbMangle(halves[i-1][1], subkeys[16-i]))]);
-		// console.log(i, halves[halves.length-1]);
 	}
 	var temp=getPermutation(halves[16][1].concat(halves[16][0]), finalTable).match(/.{8}/g);
 	for(chunk in temp){
-		temp[chunk]=String.fromCharCode(parseInt(temp[chunk], 2));
+		if(hex){
+			temp[chunk]=("0"+parseInt(temp[chunk], 2).toString(16).toUpperCase()).slice(-2);
+		}
+		else{
+			temp[chunk]=String.fromCharCode(parseInt(temp[chunk], 2));
+		}
 	}
 	return temp.join('');
 }
 
-var key=argv.k.split('');
-var subkeys=[];
-var keyhalves=[];
-
-for(int in key){
-	key[int]=(("000"+parseInt(key[int],16).toString(2)).slice(-4));
-}
-var permutedKey=getPermutation(key.join(''), permute1);
-keyhalves.push([permutedKey.slice(0, 28), permutedKey.slice(-28)]);
-
-for(var i=1;i<=16;++i){
-	keyhalves.push(getNextHalf(keyhalves[i-1], (i===1||i===2||i===9||i===16)?1:2));
-}
-
-for(var i=1;i<=16;++i){
-	subkeys.push(getPermutation(keyhalves[i].join(''), permute2));
-}
-
-var msgData="";
-if(argv.d){
-	for(char in fileData){
-		msgData+=("000"+parseInt(fileData[char], 16).toString(2)).slice(-4);
+function getDesSubkeys(key){
+	var keyhalves=[];
+	var arr=[];
+	key=key.split('');
+	for(int in key){
+		key[int]=(("000"+parseInt(key[int],16).toString(2)).slice(-4));
 	}
-}
-else{
-	for(char in fileData){
-		msgData+=("0000000"+fileData.charCodeAt(char).toString(2)).slice(-8);
+	var permutedKey=getPermutation(key.join(''), permute1);
+	keyhalves.push([permutedKey.slice(0, 28), permutedKey.slice(-28)]);
+	for(var i=1;i<=16;++i){
+		keyhalves.push(getNextHalf(keyhalves[i-1], (i===1||i===2||i===9||i===16)?1:2));
 	}
+	for(var i=1;i<=16;++i){
+		arr.push(getPermutation(keyhalves[i].join(''), permute2));
+	}
+	return arr;
 }
 
-while((msgData.length%64)!==0){
-	msgData+='0';
+function desProcessMsg(msg, hex){
+	var msgData="";
+	if(hex){
+		for(char in msg){
+			msgData+=("000"+parseInt(msg[char], 16).toString(2)).slice(-4);
+		}
+	}
+	else{
+		for(char in msg){
+			msgData+=("0000000"+msg.charCodeAt(char).toString(2)).slice(-8);
+		}
+	}
+	while((msgData.length%64)!==0){
+		msgData+='0';
+	}
+	return msgData.match(/.{64}/g);
 }
 
-msgData=msgData.match(/.{64}/g);
+function des(key, msg, decrypt, hexIn, hexOut){
+	hexIn=(typeof(hexIn)==='undefined'||hexIn===null)?false:hexIn;
+	hexOut=(typeof(hexOut)==='undefined'||hexOut===null)?true:hexOut;
+	console.log(hexIn, hexOut)
+	var subkeys=getDesSubkeys(key);
+	var finalText=desProcessMsg(msg, hexIn);
+	for(block in finalText){
+		if(argv.b==="ecb"){
+			finalText[block]=(decrypt)?desDecode(finalText[block], subkeys, hexOut):desEncode(finalText[block], subkeys, hexOut);
+		}
+		else{
+			//cbc goes here
+		}
+	}
+	return finalText;
+}
 
-var finalText="";
-if(!argv.d){
-	if(argv.a==='des'){
-		for(block in msgData){
+function tripleDes(keys, msg, decrypt){
+	var finalText=(decrypt)?msg.match(/[\s\S.]{16}/g):msg.match(/[\s\S.]{8}/g);
+	if(finalText===null){
+		finalText=[msg];
+	}
+	if(finalText.join('')!==msg){
+		finalText.push(msg.substr(finalText.length*8));
+	}
+	for(var i=0;i<3;++i){
+		for(block in finalText){
 			if(argv.b==="ecb"){
-				finalText+=ecbEncode(msgData[block]);
+				finalText[block]=des((i===1)?keys[1]:keys[0], finalText[block], (i%2===1)?(!decrypt):decrypt, (i!==0||decrypt), true).join('');
 			}
 			else{
 				//cbc goes here
 			}
 		}
 	}
-	else{
-		//aes goes here
-	}
-}
-else{
-	if(argv.a==='des'){
-		for(block in msgData){
-			if(argv.b==="ecb"){
-				finalText+=ecbDecode(msgData[block]);
+	if(decrypt){
+		for(block in finalText){
+			var temp='';
+			for(var i=0;i<finalText[block].length;i+=2){
+				temp+=String.fromCharCode(parseInt(finalText[block].substr(i, 2), 16));
 			}
-			else{
-				//cbc goes here
-			}
+			finalText[block]=temp;
 		}
 	}
-	else{
-		//aes goes here
-	}
+	return finalText;
 }
+
+function aes(){
+
+}
+
+var enc=(argv.a==='des')?des:(argv.a==='3des')?tripleDes:aes;
+
+var finalText=enc((argv.a==='3des')?[argv.k, argv.s]:argv.k, fileData, argv.d, argv.d, !argv.d).join('');
+
 if(argv.o){
 	finalText+='\n';
 	fs.writeFile(argv.o, finalText);
