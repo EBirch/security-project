@@ -8,14 +8,22 @@ var argv=require('optimist')
 	.alias('d', 'decrypt')
 	.alias('f', 'file')
 	.alias('o', 'output')
+	.alias('i', 'initvector')
 	.demand(['a', 'b', 'k', 'f'])
 	.default('d', false)
 	.default('o', false)
-	.default('k2', '')
 	.string('k')
 	.string('s')
+	.string('i')
 	.argv;
 var fs=require('fs');
+
+if(argv.b==='cbc'){
+	if((argv.a==='aes'&&argv.i.match(/^[a-fA-F0-9]{16}$/)===null)||(((argv.a==='des')||(argv/a==='3des'))&&argv.i.match(/^[a-fA-F0-9]{16}$/)===null)){
+		console.log("Invalid initial vector");
+		return;
+	}
+}
 
 if(argv.a!=='des'&&argv.a!=='3des'&&argv.a!=='aes'){
 	console.log("Invalid algorithm specified");
@@ -32,7 +40,12 @@ if(!fs.existsSync(argv.f)){
 	return;
 }
 
-if(argv.k.match(/^[a-fA-F0-9]{16}$/)===null){
+if((argv.a==='des'||argv.a==='3des')&&argv.k.match(/^[a-fA-F0-9]{16}$/)===null){
+	console.log("Invalid key");
+	return;
+}
+
+if(argv.a==='aes'&&argv.k.match(/^[a-fA-F0-9]{32}$/)===null){
 	console.log("Invalid key");
 	return;
 }
@@ -146,14 +159,16 @@ function xor(left, right){
 	return temp;
 }
 
-function hexXor(left, right){
-	var tempLeft="";
-	var tempRight="";
-	for(var i=0;i<left.length;++i){
-		tempLeft+=parseInt(left[i], 16).toString(2);
-		tempRight+=parseInt(right[i], 16).toString(2);
+function hexToBin(str){
+	var temp="";
+	for(char in str){
+		temp+=("000"+parseInt(str[char], 16).toString(2)).slice(-4);
 	}
-	return xor(tempLeft, tempRight);
+	return temp;
+}
+
+function hexXor(left, right){
+	return xor(hexToBin(left), hexToBin(right));
 }
 
 function getPermutation(str, table){
@@ -260,15 +275,45 @@ function desProcessMsg(msg, hex){
 function des(key, msg, decrypt, hexIn, hexOut){
 	hexIn=(typeof(hexIn)==='undefined'||hexIn===null)?false:hexIn;
 	hexOut=(typeof(hexOut)==='undefined'||hexOut===null)?true:hexOut;
-	console.log(hexIn, hexOut)
 	var subkeys=getDesSubkeys(key);
 	var finalText=desProcessMsg(msg, hexIn);
-	for(block in finalText){
-		if(argv.b==="ecb"){
+	var ivDone=false;
+	if(argv.b==='ecb'){
+		for(block in finalText){
 			finalText[block]=(decrypt)?desDecode(finalText[block], subkeys, hexOut):desEncode(finalText[block], subkeys, hexOut);
 		}
-		else{
-			//cbc goes here
+	}
+	else{
+		for(block in finalText){
+			if(!decrypt){
+				if(!ivDone){
+					finalText[block]=xor(finalText[block], hexToBin(argv.i));
+					ivDone=true;
+				}
+				else{
+					finalText[block]=xor(finalText[block], hexToBin(finalText[block-1]));
+				}
+				finalText[block]=desEncode(finalText[block], subkeys, hexOut);
+			}
+			else{
+				if(block<finalText.length-1){
+					finalText[finalText.length-block-1]=xor(hexToBin(desDecode(finalText[finalText.length-block-1], subkeys, true)), finalText[finalText.length-block-2]);
+				}
+				else{
+					finalText[finalText.length-block-1]=hexXor(desDecode(finalText[finalText.length-block-1], subkeys, true), argv.i);
+					ivDone=true;
+				}
+			}
+		}
+		if(decrypt&&!hexOut){
+			for(block in finalText){
+				var chunks=finalText[block].match(/.{8}/g);
+				var temp="";
+				for(chunk in chunks){
+					temp+=String.fromCharCode(parseInt(chunks[chunk], 2));
+				}
+				finalText[block]=temp;
+			}
 		}
 	}
 	return finalText;
@@ -282,8 +327,8 @@ function tripleDes(keys, msg, decrypt){
 	if(finalText.join('')!==msg){
 		finalText.push(msg.substr(finalText.length*8));
 	}
-	for(var i=0;i<3;++i){
-		for(block in finalText){
+	for(block in finalText){
+		for(var i=0;i<3;++i){
 			if(argv.b==="ecb"){
 				finalText[block]=des((i===1)?keys[1]:keys[0], finalText[block], (i%2===1)?(!decrypt):decrypt, (i!==0||decrypt), true).join('');
 			}
@@ -304,7 +349,7 @@ function tripleDes(keys, msg, decrypt){
 	return finalText;
 }
 
-function aes(){
+function aes(key, msg, decrypt){
 
 }
 
