@@ -19,7 +19,7 @@ var argv=require('optimist')
 var fs=require('fs');
 
 if(argv.b==='cbc'){
-	if((argv.a==='aes'&&argv.i.match(/^[a-fA-F0-9]{16}$/)===null)||(((argv.a==='des')||(argv/a==='3des'))&&argv.i.match(/^[a-fA-F0-9]{16}$/)===null)){
+	if((argv.a==='aes'&&argv.i.match(/^[a-fA-F0-9]{16}$/)===null)||(((argv.a==='des')||(argv.a==='3des'))&&(argv.i.match(/^[a-fA-F0-9]{16}$/)===null))){
 		console.log("Invalid initial vector");
 		return;
 	}
@@ -153,16 +153,48 @@ var finalTable=[[40, 8, 48, 16, 56, 24, 64, 32],
 
 function xor(left, right){
 	var temp="";
-	for(var i=0;i<left.length;++i){
-		temp+=(left[i]!==right[i])?'1':'0';
+	for(var xorIter=0;xorIter<left.length;++xorIter){
+		temp+=(left[xorIter]!==right[xorIter])?'1':'0';
 	}
 	return temp;
 }
 
 function hexToBin(str){
 	var temp="";
-	for(char in str){
-		temp+=("000"+parseInt(str[char], 16).toString(2)).slice(-4);
+	for(htbIter in str){
+		temp+=("000"+parseInt(str[htbIter], 16).toString(2)).slice(-4);
+	}
+	return temp;
+}
+
+function hexToAscii(str){
+	str=str.match(/.{2}/g);
+	for(var htaIter=0;htaIter<str.length;++htaIter){
+		str[htaIter]=String.fromCharCode(parseInt(str[htaIter], 16));
+	}
+	return str.join('');
+}
+
+function binToHex(str){
+	str=str.match(/.{8}/g);
+	for(var bthIter=0;bthIter<str.length;++bthIter){
+		str[bthIter]=("0"+parseInt(str[bthIter], 2).toString(16)).slice(-2);
+	}
+	return str.join('').toUpperCase();
+}
+
+function binToAscii(str){
+	str=str.match(/.{8}/g);
+	for(var btaIter=0;btaIter<str.length;++btaIter){
+		str[btaIter]=String.fromCharCode(("0000000"+parseInt(str[btaIter], 2)).slice(-8));
+	}
+	return str.join('');
+}
+
+function asciiToHex(str){
+	var temp='';
+	for(var athIter=0;athIter<str.length;++athIter){
+		temp+=("0"+parseInt(str.charCodeAt(athIter)).toString(16)).slice(-2);
 	}
 	return temp;
 }
@@ -305,14 +337,9 @@ function des(key, msg, decrypt, hexIn, hexOut){
 				}
 			}
 		}
-		if(decrypt&&!hexOut){
+		if(decrypt){
 			for(block in finalText){
-				var chunks=finalText[block].match(/.{8}/g);
-				var temp="";
-				for(chunk in chunks){
-					temp+=String.fromCharCode(parseInt(chunks[chunk], 2));
-				}
-				finalText[block]=temp;
+				finalText[block]=(hexOut)?binToHex(finalText[block]):binToAscii(finalText[block]);
 			}
 		}
 	}
@@ -321,29 +348,57 @@ function des(key, msg, decrypt, hexIn, hexOut){
 
 function tripleDes(keys, msg, decrypt){
 	var finalText=(decrypt)?msg.match(/[\s\S.]{16}/g):msg.match(/[\s\S.]{8}/g);
+	var ivDone=false;
 	if(finalText===null){
 		finalText=[msg];
 	}
 	if(finalText.join('')!==msg){
 		finalText.push(msg.substr(finalText.length*8));
 	}
-	for(block in finalText){
+	while(finalText[finalText.length-1].length<8){
+		finalText[finalText.length-1]+=String.fromCharCode(0);
+	}
+	if(argv.b==="ecb"){
 		for(var i=0;i<3;++i){
-			if(argv.b==="ecb"){
-				finalText[block]=des((i===1)?keys[1]:keys[0], finalText[block], (i%2===1)?(!decrypt):decrypt, (i!==0||decrypt), true).join('');
+			for(triDesBlock in finalText){
+				finalText[triDesBlock]=des((i===1)?keys[1]:keys[0], finalText[triDesBlock], (i%2===1)?(!decrypt):decrypt, (i!==0||decrypt), true).join('');
+			}
+		}
+	}
+	else{
+		for(triDesBlock in finalText){
+			if(!decrypt){
+				if(!ivDone){
+					finalText[triDesBlock]=binToHex(hexXor(asciiToHex(finalText[triDesBlock]), argv.i));
+					ivDone=true;
+				}
+				else{
+					finalText[triDesBlock]=binToHex(hexXor(asciiToHex(finalText[triDesBlock]), finalText[triDesBlock-1]));
+				}
+				for(var i=0;i<3;++i){
+					finalText[triDesBlock]=des((i===1)?keys[1]:keys[0], finalText[triDesBlock], (i%2===1)?(!decrypt):decrypt, true, true).join('');
+				}
 			}
 			else{
-				//cbc goes here
+				if(triDesBlock<finalText.length-1){
+					for(var i=0;i<3;++i){
+						finalText[finalText.length-triDesBlock-1]=des((i===1)?keys[1]:keys[0], finalText[finalText.length-triDesBlock-1], (i%2===1)?(!decrypt):decrypt, true, true).join('');
+					}
+					finalText[finalText.length-triDesBlock-1]=binToHex(hexXor(finalText[finalText.length-triDesBlock-1], finalText[finalText.length-triDesBlock-2]));
+				}
+				else{
+					for(var i=0;i<3;++i){
+						finalText[finalText.length-triDesBlock-1]=des((i===1)?keys[1]:keys[0], finalText[finalText.length-triDesBlock-1], (i%2===1)?(!decrypt):decrypt, true, true).join('');
+					}
+					finalText[finalText.length-triDesBlock-1]=binToHex(hexXor(finalText[finalText.length-triDesBlock-1], argv.i));
+					ivDone=true;
+				}
 			}
 		}
 	}
 	if(decrypt){
-		for(block in finalText){
-			var temp='';
-			for(var i=0;i<finalText[block].length;i+=2){
-				temp+=String.fromCharCode(parseInt(finalText[block].substr(i, 2), 16));
-			}
-			finalText[block]=temp;
+		for(triDesBlock in finalText){
+			finalText[triDesBlock]=hexToAscii(finalText[triDesBlock]);
 		}
 	}
 	return finalText;
@@ -354,7 +409,6 @@ function aes(key, msg, decrypt){
 }
 
 var enc=(argv.a==='des')?des:(argv.a==='3des')?tripleDes:aes;
-
 var finalText=enc((argv.a==='3des')?[argv.k, argv.s]:argv.k, fileData, argv.d, argv.d, !argv.d).join('');
 
 if(argv.o){
