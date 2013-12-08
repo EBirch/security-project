@@ -19,7 +19,7 @@ var argv=require('optimist')
 var fs=require('fs');
 
 if(argv.b==='cbc'){
-	if((argv.a==='aes'&&argv.i.match(/^[a-fA-F0-9]{16}$/)===null)||(((argv.a==='des')||(argv.a==='3des'))&&(argv.i.match(/^[a-fA-F0-9]{16}$/)===null))){
+	if((argv.a==='aes'&&argv.i.match(/^[a-fA-F0-9]{32}$/)===null)||(((argv.a==='des')||(argv.a==='3des'))&&(argv.i.match(/^[a-fA-F0-9]{16}$/)===null))){
 		console.log("Invalid initial vector");
 		return;
 	}
@@ -453,6 +453,7 @@ function aesDecode(words, msg){
 
 function aes(key, msg, decrypt){
 	var finalText=(decrypt)?msg:asciiToHex(msg);
+	var ivDone=false;
 	while(finalText.length%32!==0){
 		finalText+='00';
 	}
@@ -461,6 +462,29 @@ function aes(key, msg, decrypt){
 	if(argv.b==='ecb'){
 		for(block in finalText){
 			finalText[block]=(!decrypt)?aesEncode(words, finalText[block]):aesDecode(words, finalText[block]);
+		}
+	}
+	else{
+		for(block in finalText){
+			if(!decrypt){
+				if(!ivDone){
+					finalText[block]=binToHex(hexXor(finalText[block], argv.i));
+					ivDone=true;
+				}
+				else{
+					finalText[block]=binToHex(hexXor(finalText[block], finalText[block-1]));
+				}
+				finalText[block]=aesEncode(words, finalText[block]);
+			}
+			else{
+				if(block<finalText.length-1){
+					finalText[finalText.length-block-1]=binToHex(hexXor(aesDecode(words, finalText[block]), finalText[finalText.length-block-2]));
+				}
+				else{
+					finalText[finalText.length-block-1]=binToHex(hexXor(aesDecode(words, finalText[block]), argv.i));
+					ivDone=true;
+				}
+			}
 		}
 	}
 	if(decrypt){
