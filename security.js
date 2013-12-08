@@ -56,6 +56,10 @@ if((argv.a==='3des')&&(argv.s.match(/^[a-fA-F0-9]{16}$/)===null)){
 }
 
 var fileData=fs.readFileSync(argv.f, 'utf8');
+if(fileData===''){
+	console.log("Invalid file");
+	return;
+}
 
 function xor(left, right){
 	var temp="";
@@ -322,11 +326,11 @@ function getState(msg){
 	return matrix;
 }
 
-function subBytes(word){
+function subBytes(word, sbox){
 	var temp="";
 	var pairs=word.match(/.{2}/g);
 	for(pair in pairs){
-		temp+=aesSbox[parseInt(pairs[pair][0], 16)][parseInt(pairs[pair][1], 16)];
+		temp+=sbox[parseInt(pairs[pair][0], 16)][parseInt(pairs[pair][1], 16)];
 	}
 	return temp.toUpperCase();
 }
@@ -339,7 +343,7 @@ function getAesWords(key){
 	var words=key.match(/.{8}/g);
 	for(var i=1;i<11;++i){
 		var roundConst=1;
-		var newWord=binToHex(hexXor(subBytes(rotate(words[(i*4)-1])), aesRoundConsts[i]));
+		var newWord=binToHex(hexXor(subBytes(rotate(words[(i*4)-1]), aesSbox), aesRoundConsts[i]));
 		words.push(binToHex(hexXor(newWord, words[(i-1)*4])));
 		for(var j=1;j<4;++j){
 			words.push(binToHex(hexXor(words[((i-1)*4)+j], words[((i-1)*4)+j+3])));
@@ -380,11 +384,11 @@ function mixCols(state, matrix){
 function doAesRound(state, key, last){
 	for(row in state){
 		for(col in state[row]){
-			state[row][col]=subBytes(state[row][col]);
+			state[row][col]=subBytes(state[row][col], aesSbox);
 		}
 	}
 	for(row in state){
-		if(row===0){
+		if(row==0){
 			continue;
 		}
 		state[row]=state[row].slice(-(4-row)).concat(state[row].slice(0, row));
@@ -396,20 +400,55 @@ function doAesRound(state, key, last){
 	return state;
 }
 
+function doAesDecryptRound(state, key, last){
+	for(row in state){
+		if(row==0){
+			continue;
+		}
+		state[row]=state[row].slice(-row).concat(state[row].slice(0, 4-row));
+	}
+	for(row in state){
+		for(col in state[row]){
+			state[row][col]=subBytes(state[row][col], invAesSbox);
+		}
+	}
+	state=xorAesState(state, key);
+	if(!last){
+		state=mixCols(state, mixColsInvMatrix);
+	}
+	return state;
+}
+
 function aesEncode(words, msg){
 	var state=getState(msg);
 	state=xorAesState(state, words.slice(0, 4));
 	for(var roundNum=1;roundNum<11;++roundNum){
 		state=doAesRound(state, words.slice(roundNum*4, (roundNum+1)*4), (roundNum===10));
 	}
+	var temp=[[],[],[],[]];
 	for(row in state){
-		state[row]=state[row].join('');
+		for(col in state[row]){
+			temp[row][col]=state[col][row];
+		}
+		temp[row]=temp[row].join('');
 	}
-	return state.join('');
+	return temp.join('');
 }
 
 function aesDecode(words, msg){
-
+	var state=getState(msg);
+	state=xorAesState(state, words.slice(-4));
+	for(var roundNum=1;roundNum<11;++roundNum){
+		state=doAesDecryptRound(state, words.slice(-((roundNum+1)*4), -(roundNum*4)), (roundNum===10));
+	}
+	var temp=[[],[],[],[]];
+	for(row in state){
+		for(col in state[row]){
+			temp[row][col]=state[col][row];
+		}
+		temp[row]=temp[row].join('');
+	}
+	return temp.join('');
 }
 
 function aes(key, msg, decrypt){
@@ -567,10 +606,10 @@ var mixColsMatrix=[[2, 1, 1, 3],
 									[1, 3, 2, 1],
 									[1, 1, 3, 2]];
 
-var mixColsInvMatrix=[[14, 11, 13, 9],
-											[9, 14, 11, 13],
-											[13, 9, 14, 11],
-											[11, 13, 9, 14]];
+var mixColsInvMatrix=[[14, 9, 13, 11],
+											[11, 14, 9, 13],
+											[13, 11, 14, 9],
+											[9, 13, 11, 14]];
 
 var mixColsMultTables={2:[["00", "02", "04", "06", "08", "0a", "0c", "0e", "10", "12", "14", "16", "18", "1a", "1c", "1e"],
 												["20", "22", "24", "26", "28", "2a", "2c", "2e", "30", "32", "34", "36", "38", "3a", "3c", "3e"],
