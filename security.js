@@ -80,7 +80,7 @@ function hexToBin(str){
 function hexToAscii(str){
 	str=str.match(/.{2}/g);
 	for(var htaIter=0;htaIter<str.length;++htaIter){
-		str[htaIter]=String.fromCharCode(parseInt(str[htaIter], 16));
+		str[htaIter]=(parseInt(str[htaIter], 16)!==0)?String.fromCharCode(parseInt(str[htaIter], 16)):'';
 	}
 	return str.join('');
 }
@@ -455,7 +455,7 @@ function aes(key, msg, decrypt){
 	var finalText=(decrypt)?msg:asciiToHex(msg);
 	var ivDone=false;
 	while(finalText.length%32!==0){
-		finalText+='00';
+		finalText+='0';
 	}
 	finalText=finalText.match(/.{32}/g);
 	var words=getAesWords(key);
@@ -478,10 +478,10 @@ function aes(key, msg, decrypt){
 			}
 			else{
 				if(block<finalText.length-1){
-					finalText[finalText.length-block-1]=binToHex(hexXor(aesDecode(words, finalText[block]), finalText[finalText.length-block-2]));
+					finalText[finalText.length-block-1]=binToHex(hexXor(aesDecode(words, finalText[finalText.length-block-1]), finalText[finalText.length-block-2]));
 				}
 				else{
-					finalText[finalText.length-block-1]=binToHex(hexXor(aesDecode(words, finalText[block]), argv.i));
+					finalText[finalText.length-block-1]=binToHex(hexXor(aesDecode(words, finalText[finalText.length-block-1]), argv.i));
 					ivDone=true;
 				}
 			}
